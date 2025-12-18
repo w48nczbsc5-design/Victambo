@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>Escapa de la Casa de Victambo</title>
+
+<style>
+html,body{
+  margin:0;
+  padding:0;
+  background:#111;
+  color:#fff;
+  font-family:Arial;
+  overflow:hidden;
+  touch-action:none;
+}
+#game{
+  position:fixed;
+  width:100%;
+  height:100%;
+  background:#222;
+}
+#world{
+  position:absolute;
+  width:2000px;
+  height:2000px;
+  background:#2b2b2b;
+}
+.room{
+  position:absolute;
+  background:#3a3a3a;
+  border:2px solid #555;
+}
+#player{
+  position:absolute;
+  width:30px;
+  height:30px;
+  background:#00ffcc;
+  border-radius:50%;
+}
+#victambo{
+  position:absolute;
+  width:90px;
+  transform:translate(-50%,-50%);
+  pointer-events:none;
+}
+#hud{
+  position:fixed;
+  top:10px;
+  left:10px;
+  background:rgba(0,0,0,.6);
+  padding:10px;
+  border-radius:6px;
+  font-size:14px;
+}
+#message{
+  position:fixed;
+  top:40%;
+  width:100%;
+  text-align:center;
+  font-size:24px;
+  opacity:0;
+  transition:opacity 1s;
+}
+#joystick{
+  position:fixed;
+  bottom:20px;
+  left:20px;
+  width:120px;
+  height:120px;
+  background:rgba(255,255,255,.1);
+  border-radius:50%;
+}
+#stick{
+  position:absolute;
+  width:50px;
+  height:50px;
+  background:rgba(255,255,255,.4);
+  border-radius:50%;
+  top:35px;
+  left:35px;
+}
+#interact{
+  position:fixed;
+  bottom:30px;
+  right:30px;
+  width:70px;
+  height:70px;
+  background:crimson;
+  border-radius:50%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:26px;
+}
+#fade{
+  position:fixed;
+  width:100%;
+  height:100%;
+  background:black;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity 2s;
+}
+</style>
+</head>
+
+<body>
+
+<div id="game">
+  <div id="world"></div>
+</div>
+
+<div id="hud">
+  Llaves: <span id="keys">0</span><br>
+  Victambo te observa…
+</div>
+
+<div id="message"></div>
+
+<div id="joystick"><div id="stick"></div></div>
+<div id="interact">⛓️</div>
+<div id="fade"></div>
+
+<audio id="ambience" loop>
+  <source src="https://cdn.pixabay.com/audio/2022/03/15/audio_3b5c8c2c07.mp3">
+</audio>
+
+<script>
+/* ========= ESTADO ========= */
+let keys=0,gameOver=false;
+const world=document.getElementById("world");
+const player={x:300,y:300,speed:2};
+const vict={x:900,y:900,speed:1,state:"PATROL",awareness:0,lastSeen:null};
+const pEl=document.createElement("div");
+pEl.id="player";
+world.appendChild(pEl);
+const vEl=document.getElementById("victambo");
+
+/* ========= MAPA ========= */
+const rooms=[
+ {x:100,y:100,w:400,h:400},
+ {x:600,y:100,w:400,h:400},
+ {x:100,y:600,w:400,h:400},
+ {x:600,y:600,w:400,h:400}
+];
+rooms.forEach(r=>{
+ let d=document.createElement("div");
+ d.className="room";
+ d.style.left=r.x+"px";
+ d.style.top=r.y+"px";
+ d.style.width=r.w+"px";
+ d.style.height=r.h+"px";
+ world.appendChild(d);
+});
+
+/* ========= AUDIO ========= */
+const amb=document.getElementById("ambience");
+amb.volume=0.4;
+amb.play();
+
+/* ========= MENSAJES ========= */
+function msg(t){
+ const m=document.getElementById("message");
+ m.innerText=t;
+ m.style.opacity=1;
+ setTimeout(()=>m.style.opacity=0,3000);
+}
+
+/* ========= JOYSTICK ========= */
+let joy=false,center={x:0,y:0};
+const stick=document.getElementById("stick");
+document.getElementById("joystick").addEventListener("touchstart",e=>{
+ joy=true;
+ center.x=e.touches[0].clientX;
+ center.y=e.touches[0].clientY;
+});
+document.addEventListener("touchmove",e=>{
+ if(!joy)return;
+ const t=e.touches[0];
+ let dx=t.clientX-center.x;
+ let dy=t.clientY-center.y;
+ const d=Math.min(30,Math.hypot(dx,dy));
+ const a=Math.atan2(dy,dx);
+ stick.style.transform=`translate(${Math.cos(a)*d}px,${Math.sin(a)*d}px)`;
+ player.x+=Math.cos(a)*player.speed;
+ player.y+=Math.sin(a)*player.speed;
+ vict.awareness+=0.02;
+});
+document.addEventListener("touchend",()=>{
+ joy=false;
+ stick.style.transform="translate(0,0)";
+});
+
+/* ========= INTERACTUAR ========= */
+document.getElementById("interact").addEventListener("touchstart",()=>{
+ if(keys<3){
+  keys++;
+  document.getElementById("keys").innerText=keys;
+  msg("Encontraste una llave");
+ }else{
+  end(true);
+ }
+});
+
+/* ========= IA COMPLEJA ========= */
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+setInterval(()=>{
+ if(gameOver)return;
+
+ if(dist(vict,player)<180){
+  vict.state="CHASE";
+  vict.lastSeen={...player};
+ }
+ else if(vict.lastSeen){
+  vict.state="SEARCH";
+ }
+
+ if(vict.awareness>8){
+  vict.speed=2;
+ }
+
+ switch(vict.state){
+  case"PATROL":
+   vict.x+=Math.sin(Date.now()/500)*0.5;
+   vict.y+=Math.cos(Date.now()/700)*0.5;
+   break;
+  case"SEARCH":
+   if(vict.lastSeen){
+    let dx=vict.lastSeen.x-vict.x;
+    let dy=vict.lastSeen.y-vict.y;
+    let d=Math.hypot(dx,dy);
+    if(d>5){
+     vict.x+=dx/d*vict.speed;
+     vict.y+=dy/d*vict.speed;
+    }else{
+     vict.lastSeen=null;
+     vict.state="PATROL";
+    }
+   }
+   break;
+  case"CHASE":
+   let dx=player.x-vict.x;
+   let dy=player.y-vict.y;
+   let d=Math.hypot(dx,dy);
+   vict.x+=dx/d*vict.speed;
+   vict.y+=dy/d*vict.speed;
+   if(d<40) end(false);
+   break;
+ }
+},40);
+
+/* ========= LOOP ========= */
+function loop(){
+ if(gameOver)return;
+ pEl.style.left=player.x+"px";
+ pEl.style.top=player.y+"px";
+ vEl.style.left=vict.x+"px";
+ vEl.style.top=vict.y+"px";
+ world.style.transform=`translate(${-player.x+window.innerWidth/2}px,${-player.y+window.innerHeight/2}px)`;
+ requestAnimationFrame(loop);
+}
+loop();
+
+/* ========= FINAL ========= */
+function end(win){
+ gameOver=true;
+ document.getElementById("fade").style.opacity=1;
+ setTimeout(()=>{
+  msg(win?"Escapaste…":"Victambo te alcanzó");
+ },1500);
+}
+
+msg("Estás atrapado en la casa de Victambo");
+</script>
+
+</body>
+</html>
