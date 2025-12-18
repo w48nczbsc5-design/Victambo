@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>Escapa de la Casa de Victambo</title>
+
+<style>
+/* ... (Mantenemos tu estilo base con unos ajustes) ... */
+html,body{ margin:0; padding:0; background:#111; color:#fff; font-family:Arial; overflow:hidden; touch-action:none; }
+#game{ position:fixed; width:100%; height:100%; background:#111; }
+#world{ position:absolute; width:2000px; height:2000px; background:#222; transition: transform 0.1s linear; }
+
+.room{ position:absolute; background:#3a3a3a; border:4px solid #555; box-sizing: border-box; }
+
+#player{ 
+  position:absolute; width:30px; height:30px; background:#00ffcc; 
+  border-radius:50%; z-index: 10; box-shadow: 0 0 15px #00ffcc;
+}
+
+/* CORRECCIÓN: Estilo para Victambo */
+#victambo {
+  position: absolute; width: 40px; height: 40px; 
+  background: red; border-radius: 50%; border: 3px solid #000;
+  z-index: 5; display: flex; align-items: center; justify-content: center;
+  font-size: 20px; box-shadow: 0 0 20px red;
+}
+
+.key {
+  position: absolute; width: 20px; height: 20px; 
+  background: gold; border-radius: 50%; z-index: 4;
+  display: flex; align-items: center; justify-content: center; font-size: 12px;
+}
+
+#hud{ position:fixed; top:10px; left:10px; background:rgba(0,0,0,.8); padding:10px; border-radius:6px; z-index:100; }
+#message{ position:fixed; top:20%; width:100%; text-align:center; font-size:24px; opacity:0; transition:opacity 0.5s; z-index:100; pointer-events:none;}
+#joystick{ position:fixed; bottom:20px; left:20px; width:120px; height:120px; background:rgba(255,255,255,.1); border-radius:50%; z-index:100; touch-action: none;}
+#stick{ position:absolute; width:50px; height:50px; background:rgba(255,255,255,.4); border-radius:50%; top:35px; left:35px; pointer-events:none;}
+#interact{ position:fixed; bottom:30px; right:30px; width:80px; height:80px; background:crimson; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:30px; z-index:100; border: none; color: white;}
+#fade{ position:fixed; width:100%; height:100%; background:black; opacity:0; pointer-events:none; transition:opacity 2s; z-index:200; }
+</style>
+</head>
+
+<body>
+
+<div id="game">
+  <div id="world">
+      <div id="victambo">👹</div>
+  </div>
+</div>
+
+<div id="hud">
+  🔑 Llaves: <span id="keys">0</span>/3<br>
+  <small id="status">Victambo patrulla...</small>
+</div>
+
+<div id="message"></div>
+<div id="joystick"><div id="stick"></div></div>
+<button id="interact">🔑</button>
+<div id="fade"></div>
+
+<script>
+/* ========= CONFIGURACIÓN Y ESTADO ========= */
+let keysCount = 0;
+let gameOver = false;
+const world = document.getElementById("world");
+const player = { x: 300, y: 300, speed: 5 };
+const vict = { x: 800, y: 800, speed: 2.5, state: "PATROL", lastSeen: null };
+
+const pEl = document.createElement("div");
+pEl.id = "player";
+world.appendChild(pEl);
+
+const vEl = document.getElementById("victambo");
+const roomsData = [
+ {x:100, y:100, w:400, h:400},
+ {x:600, y:100, w:400, h:400},
+ {x:100, y:600, w:400, h:400},
+ {x:600, y:600, w:500, h:500}
+];
+
+// Crear habitaciones visuales
+roomsData.forEach(r => {
+ let d = document.createElement("div");
+ d.className = "room";
+ Object.assign(d.style, { left: r.x+'px', top: r.y+'px', width: r.w+'px', height: r.h+'px' });
+ world.appendChild(d);
+});
+
+// Crear llaves físicas en el mapa
+const keysElements = [];
+const keyPositions = [{x:150, y:150}, {x:900, y:150}, {x:150, y:900}];
+keyPositions.forEach((pos, i) => {
+    let k = document.createElement("div");
+    k.className = "key";
+    k.innerHTML = "🔑";
+    k.style.left = pos.x + "px";
+    k.style.top = pos.y + "px";
+    world.appendChild(k);
+    keysElements.push({x: pos.x, y: pos.y, el: k, collected: false});
+});
+
+/* ========= LÓGICA DE MENSAJES ========= */
+function msg(t) {
+ const m = document.getElementById("message");
+ m.innerText = t; m.style.opacity = 1;
+ setTimeout(() => m.style.opacity = 0, 2000);
+}
+
+/* ========= JOYSTICK (MÓVIL Y RATÓN) ========= */
+let joy = false, center = {x:0, y:0}, moveDir = {x:0, y:0};
+const stick = document.getElementById("stick");
+
+const startMove = (e) => {
+    joy = true;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    center.x = clientX; center.y = clientY;
+};
+
+const doMove = (e) => {
+    if(!joy) return;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    let dx = clientX - center.x;
+    let dy = clientY - center.y;
+    const dist = Math.hypot(dx, dy);
+    const max = 40;
+    const angle = Math.atan2(dy, dx);
+    const limitedDist = Math.min(dist, max);
+    
+    stick.style.transform = `translate(${Math.cos(angle)*limitedDist}px, ${Math.sin(angle)*limitedDist}px)`;
+    moveDir.x = Math.cos(angle) * (dist/max);
+    moveDir.y = Math.sin(angle) * (dist/max);
+};
+
+const endMove = () => { joy = false; moveDir = {x:0, y:0}; stick.style.transform = "translate(0,0)"; };
+
+document.getElementById("joystick").addEventListener("touchstart", startMove);
+document.addEventListener("touchmove", doMove);
+document.addEventListener("touchend", endMove);
+
+/* ========= INTERACCIÓN ========= */
+document.getElementById("interact").addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    checkInteraction();
+});
+document.getElementById("interact").addEventListener("click", checkInteraction);
+
+function checkInteraction() {
+    if(gameOver) return;
+    
+    // Recoger llaves
+    keysElements.forEach(k => {
+        if(!k.collected && Math.hypot(player.x - k.x, player.y - k.y) < 50) {
+            k.collected = true;
+            k.el.style.display = "none";
+            keysCount++;
+            document.getElementById("keys").innerText = keysCount;
+            msg("¡Tienes una llave!");
+        }
+    });
+
+    // Escapar
+    if(keysCount >= 3 && player.x > 600 && player.y > 600) {
+        end(true);
+    } else if (keysCount < 3 && player.x > 600 && player.y > 600) {
+        msg("Necesitas las 3 llaves para salir");
+    }
+}
+
+/* ========= BUCLE PRINCIPAL (IA Y MOVIMIENTO) ========= */
+function update() {
+    if(gameOver) return;
+
+    // Mover jugador
+    player.x += moveDir.x * player.speed;
+    player.y += moveDir.y * player.speed;
+
+    // IA de Victambo
+    const d = Math.hypot(player.x - vict.x, player.y - vict.y);
+    const statusEl = document.getElementById("status");
+
+    if(d < 250) {
+        vict.state = "CHASE";
+        statusEl.innerText = "¡VICTAMBO TE VIO!";
+        statusEl.style.color = "red";
+    } else {
+        vict.state = "PATROL";
+        statusEl.innerText = "Victambo te busca...";
+        statusEl.style.color = "white";
+    }
+
+    if(vict.state === "CHASE") {
+        let angle = Math.atan2(player.x - vict.x, vict.y - player.y); // Invertido para corrección de ejes
+        vict.x += Math.sin(angle) * vict.speed;
+        vict.y -= Math.cos(angle) * vict.speed;
+        if(d < 35) end(false);
+    } else {
+        vict.x += Math.sin(Date.now()/1000) * 2;
+        vict.y += Math.cos(Date.now()/1500) * 2;
+    }
+
+    // Actualizar visuales
+    pEl.style.left = player.x + "px";
+    pEl.style.top = player.y + "px";
+    vEl.style.left = vict.x + "px";
+    vEl.style.top = vict.y + "px";
+
+    // Cámara
+    world.style.transform = `translate(${-player.x + window.innerWidth/2}px, ${-player.y + window.innerHeight/2}px)`;
+
+    requestAnimationFrame(update);
+}
+
+function end(win) {
+    gameOver = true;
+    document.getElementById("fade").style.opacity = 1;
+    setTimeout(() => {
+        alert(win ? "¡INCREÍBLE! Escapaste de Victambo." : "Victambo te atrapó... Fin del juego.");
+        location.reload();
+    }, 1000);
+}
+
+msg("Busca las 3 llaves y llega a la sala inferior derecha");
+update();
+</script>
+
+</body>
+</html>
