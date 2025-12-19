@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Victambo 3D - Iluminado</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #eee; font-family: Arial, sans-serif; }
+        #ui { position: fixed; top: 20px; left: 20px; color: #000; z-index: 10; pointer-events: none; background: rgba(255,255,255,0.7); padding: 10px; border-radius: 8px; }
+        #keys-ui { font-size: 22px; color: #b8860b; font-weight: bold; }
+        #radar { font-size: 18px; color: #d00; margin-top: 5px; display: none; font-weight: bold; }
+        
+        #joy-container { position: fixed; bottom: 40px; left: 40px; width: 120px; height: 120px; background: rgba(0,0,0,0.2); border-radius: 50%; z-index: 20; border: 2px solid #000; }
+        #joy-stick { position: absolute; top: 35px; left: 35px; width: 50px; height: 50px; background: #333; border-radius: 50%; }
+        
+        #btn-action { position: fixed; bottom: 50px; right: 40px; width: 80px; height: 80px; background: #c00; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 30px; border: 4px solid #fff; z-index: 20; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        
+        #start-screen { position: fixed; inset: 0; background: #fff; display: flex; align-items: center; justify-content: center; z-index: 200; color: #000; cursor: pointer; text-align: center; }
+        #overlay { position: fixed; inset: 0; background: rgba(255,0,0,0.8); display: flex; align-items: center; justify-content: center; color: white; font-size: 30px; z-index: 300; display: none; }
+    </style>
+</head>
+<body>
+
+<div id="start-screen">
+    <h1>VÍCTOR MENDIVIL: EL ESCAPE<br><small>Haz clic para jugar (Audio: Orula)</small></h1>
+</div>
+
+<div id="ui">
+    <div id="keys-ui">🔑 LLAVES: <span id="count">0</span> / 5</div>
+    <div id="floor-ui">PISO: PLANTA BAJA</div>
+    <div id="radar">⚠️ ¡ORULA SONANDO FUERTE! ⚠️</div>
+</div>
+
+<div id="joy-container"><div id="joy-stick"></div></div>
+<div id="btn-action">🔑</div>
+<div id="overlay">GAME OVER</div>
+
+<audio id="orula-song" loop>
+    <source src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" type="audio/mpeg">
+</audio>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+let scene, camera, renderer, player, monster, orulaAudio;
+let keys = [], keysCollected = 0;
+let moveForward = 0, moveSide = 0;
+let isGameOver = false;
+
+const PLAYER_SPEED = 0.12;
+const MONSTER_SPEED = 0.095;
+const FLOORS = { basement: -10, ground: 0, attic: 10 };
+
+document.getElementById('start-screen').addEventListener('click', () => {
+    document.getElementById('start-screen').style.display = 'none';
+    orulaAudio = document.getElementById('orula-song');
+    orulaAudio.volume = 0;
+    orulaAudio.play();
+    init();
+    animate();
+});
+
+function init() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xdddddd); // Fondo claro
+
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // --- ILUMINACIÓN TOTAL ---
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+    scene.add(hemiLight);
+    
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(5, 10, 5);
+    scene.add(dirLight);
+
+    // --- PISOS ---
+    const floorColors = [0xaaaaaa, 0xcccccc, 0xffffff];
+    [FLOORS.basement, FLOORS.ground, FLOORS.attic].forEach((y, i) => {
+        const floorGeo = new THREE.PlaneGeometry(60, 60);
+        const floorMat = new THREE.MeshPhongMaterial({ color: floorColors[i], side: THREE.DoubleSide });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = Math.PI / 2;
+        floor.position.y = y;
+        scene.add(floor);
+
+        // Paredes para cada piso
+        const wallGeo = new THREE.BoxGeometry(60, 5, 1);
+        const wallMat = new THREE.MeshPhongMaterial({ color: 0x888888 });
+        const wall = new THREE.Mesh(wallGeo, wallMat);
+        wall.position.set(0, y + 2.5, -30);
+        scene.add(wall);
+    });
+
+    player = new THREE.Group();
+    player.position.set(0, 1.5, 10);
+    scene.add(player);
+
+    // --- VÍCTOR MENDIVIL (MONSTRUO) ---
+    const monsterTex = new THREE.TextureLoader().load('https://i.ibb.co/Xf7T4Bf/victor-mendivil.png'); // Placeholder de la imagen
+    const monsterMat = new THREE.SpriteMaterial({ map: monsterTex });
+    monster = new THREE.Sprite(monsterMat);
+    monster.scale.set(4, 4, 1);
+    monster.position.set(15, 1.5, -15);
+    scene.add(monster);
+
+    // --- 5 LLAVES ---
+    const keyGeo = new THREE.TorusGeometry(0.3, 0.1, 8, 16);
+    const keyMat = new THREE.MeshPhongMaterial({ color: 0xffd700 });
+    const keyPositions = [
+        {x: 10, y: -9, z: 10}, {x: -20, y: 1, z: -15}, {x: 15, y: 1, z: 5}, 
+        {x: -10, y: 11, z: 20}, {x: 5, y: 11, z: -5}
+    ];
+    keyPositions.forEach(pos => {
+        const key = new THREE.Mesh(keyGeo, keyMat);
+        key.position.set(pos.x, pos.y, pos.z);
+        scene.add(key);
+        keys.push(key);
+    });
+
+    setupControls();
+}
+
+function setupControls() {
+    const container = document.getElementById('joy-container');
+    const stick = document.getElementById('joy-stick');
+
+    container.addEventListener('touchmove', (e) => {
+        const touch = e.touches[0];
+        const rect = container.getBoundingClientRect();
+        const dx = touch.clientX - (rect.left + 60);
+        const dy = touch.clientY - (rect.top + 60);
+        const angle = Math.atan2(dy, dx);
+        const dist = Math.min(Math.hypot(dx, dy), 40);
+        
+        stick.style.transform = `translate(${Math.cos(angle)*dist}px, ${Math.sin(angle)*dist}px)`;
+        moveForward = -Math.sin(angle) * (dist/40);
+        moveSide = Math.cos(angle) * (dist/40);
+    });
+
+    container.addEventListener('touchend', () => {
+        stick.style.transform = `translate(0,0)`;
+        moveForward = 0; moveSide = 0;
+    });
+
+    document.getElementById('btn-action').addEventListener('click', interact);
+}
+
+function interact() {
+    keys.forEach((k, i) => {
+        if (player.position.distanceTo(k.position) < 3) {
+            scene.remove(k);
+            keys.splice(i, 1);
+            keysCollected++;
+            document.getElementById('count').innerText = keysCollected;
+        }
+    });
+
+    // Zona de escaleras (centro 0,0)
+    if (Math.hypot(player.position.x, player.position.z) < 4) {
+        if (player.position.y < 5) player.position.y += 10;
+        else player.position.y = -8.5;
+        
+        let p = player.position.y < 0 ? "SÓTANO" : (player.position.y > 5 ? "PLANTA ALTA" : "PLANTA BAJA");
+        document.getElementById('floor-ui').innerText = "PISO: " + p;
+    }
+}
+
+function animate() {
+    if (isGameOver) return;
+    requestAnimationFrame(animate);
+
+    player.translateZ(moveForward * PLAYER_SPEED);
+    player.translateX(moveSide * PLAYER_SPEED);
+    camera.position.set(player.position.x, player.position.y + 1, player.position.z + 4);
+    camera.lookAt(player.position.x, player.position.y, player.position.z - 5);
+
+    const dist = player.position.distanceTo(monster.position);
+
+    // Lógica Víctor Mendivil y Audio
+    if (Math.abs(player.position.y - monster.position.y) < 5) {
+        // Audio Orula dinámico
+        let vol = Math.max(0, 1 - (dist / 25));
+        orulaAudio.volume = vol;
+        
+        document.getElementById('radar').style.display = dist < 18 ? 'block' : 'none';
+
+        // Persecución
+        const dir = new THREE.Vector3().subVectors(player.position, monster.position).normalize();
+        monster.position.add(dir.multiplyScalar(MONSTER_SPEED));
+        
+        if (dist < 1.8) endGame();
+    } else {
+        orulaAudio.volume = 0;
+        document.getElementById('radar').style.display = 'none';
+    }
+
+    renderer.render(scene, camera);
+}
+
+function endGame() {
+    isGameOver = true;
+    orulaAudio.pause();
+    document.getElementById('overlay').style.display = 'flex';
+    setTimeout(() => location.reload(), 3000);
+}
+</script>
+</body>
+</html>
